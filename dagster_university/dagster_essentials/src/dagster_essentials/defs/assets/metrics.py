@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 
 import dagster as dg
-
+from dagster_duckdb import DuckDBResource
 import matplotlib.pyplot as plt
 import geopandas as gpd
 import pandas as pd
@@ -10,7 +10,6 @@ import duckdb
 import os
 
 from dagster_essentials.defs.assets import constants
-from dagster._utils.backoff import backoff
 
 
 @dg.asset
@@ -20,7 +19,7 @@ def metrics(context: dg.AssetExecutionContext) -> dg.MaterializeResult: ...
 @dg.asset(
     deps=["taxi_trips", "taxi_zones"]
 )
-def manhattan_stats() -> None:
+def manhattan_stats(database: DuckDBResource) -> None:
     """
       Generate and save some basic statistics and visualizations for Manhattan taxi trips
     """
@@ -36,11 +35,15 @@ def manhattan_stats() -> None:
         where borough = 'Manhattan' and geometry is not null
         group by zone, borough, geometry
     """
-    #Executes that query against the same DuckDB database that you ingested data into in the other assets.
-    conn = duckdb.connect(os.getenv("DUCKDB_DATABASE"))
+    # Executes that query against the same DuckDB database that you ingested data into in the other assets.
+    # conn = duckdb.connect(os.getenv("DUCKDB_DATABASE"))
     
-    #  Stores as a regular pandas DataFrame, not GeoPandas!!
-    trips_by_zone = conn.execute(query).fetch_df()
+    #The Dagster DuckDBResource handles the connection
+    with database.get_connection() as conn:
+
+    # Stores as a regular pandas DataFrame, not GeoPandas!!
+        trips_by_zone = conn.execute(query).fetch_df()
+
 
     # Use GeoPandas to turn messy coordinates into GeoPandas format: 
 
@@ -76,19 +79,11 @@ def manhattan_map() -> None:
 @dg.asset(
     deps=["taxi_trips"]
 )
-def trips_by_week() -> None:
+def trips_by_week(database: DuckDBResource) -> None:
     """
       Generate and save some basic statistics for weekly taxi trips as CSV file 
     """
-   # retry connecting to DuckDB up to 10 times
-    conn = backoff(
-        fn=duckdb.connect,
-        retry_on=(RuntimeError, duckdb.IOException),
-        kwargs={
-            "database": os.getenv("DUCKDB_DATABASE"),
-        },
-        max_retries=10,
-    )
+  
     # Date Range Setup
     current_date = datetime.strptime("2023-03-01", constants.DATE_FORMAT)
     end_date = datetime.strptime("2023-04-01", constants.DATE_FORMAT)
@@ -96,35 +91,39 @@ def trips_by_week() -> None:
     # Initialize an empty DataFrame to hold results
     result = pd.DataFrame()
     
-    # Loop through each week in the date range
-    while current_date < end_date:
-        # Format the current date as a string to match SQL date format
-        current_date_str = current_date.strftime(constants.DATE_FORMAT)
-        # SQL Query to aggregate data for the current week
-        query = f"""
-            select
-                vendor_id, total_amount, trip_distance, passenger_count
-            from trips
-            where date_trunc('week', pickup_datetime) = date_trunc('week', '{current_date_str}'::date)
-        """
-        # fetch the data for the week as dataframe
-        data_for_week = conn.execute(query).fetch_df()
+    # The Dagster DuckDBResource handles the connection
+    with database.get_connection() as conn:
 
-        #  Perform aggregation
-        aggregate = data_for_week.agg({
-            "vendor_id": "count",
-            "total_amount": "sum",
-            "trip_distance": "sum",
-            "passenger_count": "sum"
-        }).rename({"vendor_id": "num_trips"}).to_frame().T # type: ignore
+        # Loop through each week in the date range
+        while current_date < end_date:
+            # Format the current date as a string to match SQL date format
+            current_date_str = current_date.strftime(constants.DATE_FORMAT)
+            # SQL Query to aggregate data for the current week
+            query = f"""
+                select
+                    vendor_id, total_amount, trip_distance, passenger_count
+                from trips
+                where date_trunc('week', pickup_datetime) = date_trunc('week', '{current_date_str}'::date)
+            """
+            
+            # fetch the data for the week as dataframe
+            data_for_week = conn.execute(query).fetch_df()
+            
+            #  Perform aggregation
+            aggregate = data_for_week.agg({
+                "vendor_id": "count",
+                "total_amount": "sum",
+                "trip_distance": "sum",
+                "passenger_count": "sum"
+            }).rename({"vendor_id": "num_trips"}).to_frame().T # type: ignore
 
-        # Add week's start date as period column
-        aggregate["period"] = current_date
-        # Append this week's data to results
-        result = pd.concat([result, aggregate])
+            # Add week's start date as period column
+            aggregate["period"] = current_date
+            # Append this week's data to results
+            result = pd.concat([result, aggregate])
 
-        #Move to next week (+7 days)
-        current_date += timedelta(days=7)
+            #Move to next week (+7 days)
+            current_date += timedelta(days=7)
 
     # clean up the formatting of the dataframe
     result['num_trips'] = result['num_trips'].astype(int)
