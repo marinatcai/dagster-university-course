@@ -17,8 +17,20 @@ def taxi_trips_file(context: dg.AssetExecutionContext) -> None:
     """
       The raw parquet files for the taxi trips dataset. Sourced from the NYC Open Data portal.
     """
+
+# Initially, we were downloading the raw files directly from the source system.
     #hardcoded logic for month = '2023-03'
     #month_to_fetch = '2023-03'
+
+    #raw_trips = requests.get(
+        #f"https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_{month_to_fetch}.parquet"
+    #)
+    #with open(constants.TAXI_TRIPS_TEMPLATE_FILE_PATH.format(month_to_fetch), "wb") as output_file:
+        #output_file.write(raw_trips.content)
+
+
+
+# In this option we will load the data directly into DuckDB from the source system without saving a local copy of the raw file.
 
     # get the partition key from the context
     partition_date_str = context.partition_key
@@ -27,12 +39,25 @@ def taxi_trips_file(context: dg.AssetExecutionContext) -> None:
     # So we only need the year and month portion of the string. We slice the string to make it match the format expected by our source system.
     month_to_fetch = partition_date_str[:-3]
 
-    raw_trips = requests.get(
-        f"https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_{month_to_fetch}.parquet"
-    )
+    query = f"""
+    create table if not exists trips (
+      vendor_id integer, pickup_zone_id integer, dropoff_zone_id integer,
+      rate_code_id double, payment_type integer, dropoff_datetime timestamp,
+      pickup_datetime timestamp, trip_distance double, passenger_count double,
+      total_amount double, partition_date varchar
+    );
 
-    with open(constants.TAXI_TRIPS_TEMPLATE_FILE_PATH.format(month_to_fetch), "wb") as output_file:
-        output_file.write(raw_trips.content)
+    delete from trips where partition_date = '{month_to_fetch}';
+
+    insert into trips
+    select
+      VendorID, PULocationID, DOLocationID, RatecodeID, payment_type, tpep_dropoff_datetime,
+      tpep_pickup_datetime, trip_distance, passenger_count, total_amount, '{month_to_fetch}' as partition_date
+    from '{constants.TAXI_TRIPS_TEMPLATE_FILE_PATH.format(month_to_fetch)}';
+  """
+    
+with database.get_connection() as conn:
+      conn.execute(query)
 
 @dg.asset
 def taxi_zones_file() -> None:
