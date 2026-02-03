@@ -5,14 +5,28 @@ import os
 import dagster as dg
 import requests
 from dagster_essentials.defs.assets import constants
+from dagster_essentials.defs.partitions import monthly_partition
 
+
+@dg.asset(
+    partitions_def=monthly_partition
+)
 
 @dg.asset
-def taxi_trips_file() -> None:
+def taxi_trips_file(context: dg.AssetExecutionContext) -> None:
     """
       The raw parquet files for the taxi trips dataset. Sourced from the NYC Open Data portal.
     """
-    month_to_fetch = '2023-03'
+    #hardcoded logic for month = '2023-03'
+    #month_to_fetch = '2023-03'
+
+    # get the partition key from the context
+    partition_date_str = context.partition_key
+    #context.partition_key supplies the materializing partition’s date as a string in the YYYY-MM-DD format
+    # NYC OpenData source system, the taxi trip files are structured in a YYYY-MM format. 
+    # So we only need the year and month portion of the string. We slice the string to make it match the format expected by our source system.
+    month_to_fetch = partition_date_str[:-3]
+
     raw_trips = requests.get(
         f"https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_{month_to_fetch}.parquet"
     )
