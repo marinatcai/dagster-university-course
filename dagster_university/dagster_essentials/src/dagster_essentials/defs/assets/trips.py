@@ -1,24 +1,23 @@
 # src/dagster_essentials/defs/assets/trips.py
 from dagster_duckdb import DuckDBResource
-import duckdb
-import os
 import dagster as dg
 import requests
 from dagster_essentials.defs.assets import constants
 from dagster_essentials.defs.partitions import monthly_partition
 
+import duckdb
+import os
+
 
 @dg.asset(
     partitions_def=monthly_partition
 )
-
-@dg.asset
 def taxi_trips_file(context: dg.AssetExecutionContext) -> None:
     """
       The raw parquet files for the taxi trips dataset. Sourced from the NYC Open Data portal.
     """
 
-# Initially, we were downloading the raw files directly from the source system.
+    # Initially, we were downloading the raw files directly from the source system.
     #hardcoded logic for month = '2023-03'
     #month_to_fetch = '2023-03'
 
@@ -29,8 +28,7 @@ def taxi_trips_file(context: dg.AssetExecutionContext) -> None:
         #output_file.write(raw_trips.content)
 
 
-
-# In this option we will load the data directly into DuckDB from the source system without saving a local copy of the raw file.
+    # In this option we will load the data directly into DuckDB from the source system without saving a local copy of the raw file.
 
     # get the partition key from the context
     partition_date_str = context.partition_key
@@ -56,8 +54,8 @@ def taxi_trips_file(context: dg.AssetExecutionContext) -> None:
     from '{constants.TAXI_TRIPS_TEMPLATE_FILE_PATH.format(month_to_fetch)}';
   """
     
-with database.get_connection() as conn:
-      conn.execute(query)
+    with database.get_connection() as conn:
+        conn.execute(query)
 
 @dg.asset
 def taxi_zones_file() -> None:
